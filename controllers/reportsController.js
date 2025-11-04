@@ -158,52 +158,56 @@ async function prsInRange(req, res) {
     const to    = clampDate(req.query.to)   || '2100-01-01';
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit ?? '100', 10)));
 
+    // MySQL 8+: usar window functions para evitar JOIN por igualdad de float
     const sql = `
-      SELECT e.nombre AS ejercicio,
-             x.est_1rm,
-             x.peso_kg      AS max_peso,
-             x.reps         AS max_reps,
-             DATE_FORMAT(s.fecha_sesion, '%Y-%m-%d') AS date,
-             u.nombre       AS usuario
-      FROM (
-        SELECT rpe.ejercicio_id,
-               es.sesion_id,
-               es.peso_kg,
-               es.reps,
-               (es.peso_kg * (1 + es.reps/30)) AS est_1rm
+      WITH ranked AS (
+        SELECT
+          rpe.ejercicio_id,
+          s.id                                     AS sesion_id,
+          s.usuario_id,
+          DATE(s.fecha_sesion)                     AS f,
+          es.peso_kg,
+          es.reps,
+          CAST(es.peso_kg * (1 + es.reps/30.0) AS DECIMAL(10,4)) AS est_1rm,
+          ROW_NUMBER() OVER (
+            PARTITION BY rpe.ejercicio_id, s.usuario_id, DATE(s.fecha_sesion)
+            ORDER BY (es.peso_kg * (1 + es.reps/30.0)) DESC,
+                     es.peso_kg DESC,
+                     es.reps DESC,
+                     es.id DESC
+          ) AS rn
         FROM ejercicios_sets es
-        JOIN sesiones s                   ON s.id = es.sesion_id
+        JOIN sesiones s  ON s.id = es.sesion_id
         JOIN rutina_plantilla_ejercicios rpe ON rpe.id = es.plantilla_ejercicio_id
         WHERE s.fecha_sesion BETWEEN ? AND ?
-      ) x
-      JOIN (
-        SELECT rpe.ejercicio_id,
-               MAX(es.peso_kg * (1 + es.reps/30)) AS max_1rm
-        FROM ejercicios_sets es
-        JOIN sesiones s                   ON s.id = es.sesion_id
-        JOIN rutina_plantilla_ejercicios rpe ON rpe.id = es.plantilla_ejercicio_id
-        WHERE s.fecha_sesion BETWEEN ? AND ?
-        GROUP BY rpe.ejercicio_id, s.usuario_id, DATE(s.fecha_sesion)
-      ) m
-        ON m.ejercicio_id = x.ejercicio_id
-       AND m.max_1rm      = x.est_1rm
-      JOIN sesiones s  ON s.id = x.sesion_id
-      JOIN ejercicios e ON e.id = x.ejercicio_id
-      JOIN usuarios  u  ON u.id = s.usuario_id
-      ORDER BY x.est_1rm DESC
+      )
+      SELECT
+        e.nombre                         AS ejercicio,
+        r.est_1rm,
+        r.peso_kg                        AS max_peso,
+        r.reps                           AS max_reps,
+        DATE_FORMAT(r.f, '%Y-%m-%d')     AS date,
+        u.nombre                         AS usuario
+      FROM ranked r
+      JOIN ejercicios e ON e.id = r.ejercicio_id
+      JOIN usuarios  u ON u.id = r.usuario_id
+      WHERE r.rn = 1
+      ORDER BY r.est_1rm DESC
       LIMIT ${limit}
     `;
 
-    const rows = await query(sql, [from, to, from, to]);
+    const rows = await query(sql, [from, to]);
 
-    res.json(rows.map(r => ({
-      ejercicio: r.ejercicio,
-      est_1rm: Number(r.est_1rm),
-      max_peso: Number(r.max_peso),
-      max_reps: Number(r.max_reps),
-      date: r.date,
-      usuario: r.usuario
-    })));
+    res.json(
+      rows.map(r => ({
+        ejercicio: r.ejercicio,
+        est_1rm: Number(r.est_1rm != null ? Number(r.est_1rm).toFixed(2) : null),
+        max_peso: Number(r.max_peso),
+        max_reps: Number(r.max_reps),
+        date: r.date,
+        usuario: r.usuario
+      }))
+    );
   } catch (e) {
     console.error('prsInRange error', e);
     res.status(500).json({ error: 'Error generando reporte de PRs' });

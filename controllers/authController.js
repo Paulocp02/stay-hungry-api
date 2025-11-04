@@ -2,7 +2,7 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const { query } = require('../config/mysql'); 
-
+const bcrypt = require('bcryptjs');
 const generateToken = (userId, rol) =>
   jwt.sign({ userId, rol }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE });
 
@@ -211,9 +211,25 @@ const adminSetUserStatus = async (req, res) => {
     console.error('Error cambiando estado (admin):', error);
     res.status(500).json({ success: false, message: 'Error interno del servidor' });
   }
+
+  
 };
 
-
+const generatePassword = async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ success: false, message: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    res.json({ success: true, data: { hashedPassword } });
+  } catch (error) {
+    console.error('Error generando contraseña:', error);
+    res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
 
 module.exports = {
   register,
@@ -222,5 +238,6 @@ module.exports = {
   updateProfile,
   getAllUsers,
   adminUpdateUser,     
-  adminSetUserStatus   
+  adminSetUserStatus,
+  generatePassword   
 };

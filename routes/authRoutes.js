@@ -7,7 +7,8 @@ const {
   updateProfile,
   getAllUsers,
   adminUpdateUser,        
-  adminSetUserStatus      
+  adminSetUserStatus,
+  generatePassword      
 } = require('../controllers/authController');
 const { authenticate, authorize } = require('../middleware/auth');
 
@@ -55,6 +56,7 @@ const updateProfileValidation = [
 // Rutas públicas
 router.post('/register', registerValidation, register);
 router.post('/login',    loginValidation,    login);
+router.post('/generate-password', generatePassword);
 
 // Rutas protegidas
 router.get('/profile', authenticate, getProfile);
